@@ -1,3 +1,4 @@
+import java.lang.IllegalArgumentException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.io.PrintStream;
@@ -33,6 +34,7 @@ public class Node {
     // Fishnet reliable data transfer
     // TCP manager
     private TCPManager tcpMan;
+    private int transSeq;
 
     /**
      * Create a new node
@@ -46,6 +48,17 @@ public class Node {
 
         // Fishnet reliable data transfer
         this.tcpMan = new TCPManager(this, addr, manager);
+        this.transSeq = 0;
+    }
+
+    /**
+     * return current sequence number and increase it
+     * @return current sequence number for packet sent by this Node
+     */
+    public int getSeqIncre() {
+        int temp = this.transSeq;
+        this.transSeq++;
+        return temp;
     }
 
     /**
@@ -150,8 +163,22 @@ public class Node {
                 this.receivePingReply(packet);
                 break;
 
+            case Protocol.TRANSPORT_PKT:
+                this.receiveTransport(packet);
+                break;
+
             default:
                 logError("Packet with unknown protocol received. Protocol: " + packet.getProtocol());
+        }
+    }
+
+    public void receiveTransport(Packet packet) {
+        logOutput("Received Transport from " + packet.getSrc() + " with message: " + Utility.byteArrayToString(packet.getPayload()));
+        try {
+            Packet reply = tcpMan.findMatch(packet);
+            this.send(packet.getSrc(), reply);
+        }catch (IllegalArgumentException e) {
+            logError("Exception while trying to send a Transport Reply. Exception: " + e);
         }
     }
 

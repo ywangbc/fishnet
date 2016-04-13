@@ -1,3 +1,5 @@
+import java.util.HashMap;
+
 /**
  * <p>Title: CPSC 433/533 Programming Assignment</p>
  *
@@ -14,6 +16,8 @@ public class TCPManager {
     private Node node;
     private int addr;
     private Manager manager;
+    TCPSock listenSock;
+    HashMap<SockKey, TCPSock> clientSock;
 
     private static final byte dummy[] = new byte[0];
 
@@ -30,6 +34,37 @@ public class TCPManager {
 
     }
 
+    public Packet findMatch(Packet packet) {
+        Transport transPkt = Transport.unpack(packet.getPayload());
+        SockKey sockKey = new SockKey(packet.getDest(), transPkt.getDestPort(), packet.getSrc(), transPkt.getSrcPort());
+        //If the corresponding TCPSock is a listening sock
+        //Or the client socket has already closed
+        Transport replyTransPkt = null;
+        if(!clientSock.containsKey(sockKey) || clientSock.get(sockKey).isClosed()) {
+            replyTransPkt = listenSock.onReceive(transPkt, packet.getSrc());
+        }
+        //If the corresponding TCPSock is a r/w client sock
+        else {
+            TCPSock tcpSock = clientSock.get(sockKey);
+            replyTransPkt = tcpSock.onReceive(transPkt, packet.getSrc());
+        }
+        if(replyTransPkt==null) {
+            return null;
+        }
+        Packet replyPkt = new Packet(packet.getSrc(), this.addr, Packet.MAX_TTL, Protocol.TRANSPORT_PKT, node.getSeqIncre(),
+                replyTransPkt.pack());
+        return replyPkt;
+    }
+
+    public int getAddr() {
+        return addr;
+    }
+    public void logOutput(String output) {
+        node.logOutput(output);
+    }
+    public void logError(String error) {
+        node.logError(error);
+    }
     /*
      * Begin socket API
      */
@@ -41,7 +76,8 @@ public class TCPManager {
      *                 a local port
      */
     public TCPSock socket() {
-        return null;
+        listenSock = new TCPSock(this);
+        return listenSock;
     }
 
     /*
