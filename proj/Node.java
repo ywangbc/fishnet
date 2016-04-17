@@ -174,12 +174,7 @@ public class Node {
 
     public void receiveTransport(Packet packet) {
         logOutput("Received Transport from " + packet.getSrc() + " with message: " + Utility.byteArrayToString(packet.getPayload()));
-        try {
-            Packet reply = tcpMan.findMatch(packet);
-            this.send(packet.getSrc(), reply);
-        }catch (IllegalArgumentException e) {
-            logError("Exception while trying to send a Transport Reply. Exception: " + e);
-        }
+        tcpMan.findMatch(packet);
     }
 
     private void receivePing(Packet packet) {
@@ -248,6 +243,12 @@ public class Node {
     public void sendSegment(int srcAddr, int destAddr, int protocol, byte[] payload) {
         Packet packet = new Packet(destAddr, srcAddr, Packet.MAX_TTL,
                 protocol, 0, payload);
+        this.send(destAddr, packet);
+    }
+
+    public void sendTrans(int srcAddr, int destAddr, int protocol, byte[] payload) {
+        Packet packet = new Packet(destAddr, srcAddr, Packet.MAX_TTL,
+                protocol, getSeqIncre(), payload);
         this.send(destAddr, packet);
     }
 
@@ -350,6 +351,9 @@ public class Node {
                             Integer.parseInt(args[5]) :
                             TransferServer.DEFAULT_BUFFER_SZ;
             TCPSock sock = this.tcpMan.socket();
+            if(sock == null) {
+                logError("Run out of listening port");
+            }
             sock.bind(port);
             sock.listen(backlog);
 

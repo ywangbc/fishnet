@@ -18,6 +18,9 @@ public class TCPManager {
     private Manager manager;
     TCPSock listenSock;
     HashMap<SockKey, TCPSock> clientSock;
+    int sockNum; //
+    private final int MAXSOCKNUM = 256;
+    private TCPSock[] tcpSock;
 
     private static final byte dummy[] = new byte[0];
 
@@ -25,6 +28,11 @@ public class TCPManager {
         this.node = node;
         this.addr = addr;
         this.manager = manager;
+        this.sockNum = 0;
+        tcpSock = new TCPSock[MAXSOCKNUM];
+        for(int i = 0; i < MAXSOCKNUM; i++) {
+            tcpSock[i] = new TCPSock(this);
+        }
     }
 
     /**
@@ -34,26 +42,25 @@ public class TCPManager {
 
     }
 
-    public Packet findMatch(Packet packet) {
+    public void findMatch(Packet packet) {
         Transport transPkt = Transport.unpack(packet.getPayload());
         SockKey sockKey = new SockKey(packet.getDest(), transPkt.getDestPort(), packet.getSrc(), transPkt.getSrcPort());
         //If the corresponding TCPSock is a listening sock
         //Or the client socket has already closed
-        Transport replyTransPkt = null;
         if(!clientSock.containsKey(sockKey) || clientSock.get(sockKey).isClosed()) {
-            replyTransPkt = listenSock.onReceive(transPkt, packet.getSrc());
+            listenSock.onReceive(transPkt, packet.getSrc());
         }
         //If the corresponding TCPSock is a r/w client sock
         else {
             TCPSock tcpSock = clientSock.get(sockKey);
-            replyTransPkt = tcpSock.onReceive(transPkt, packet.getSrc());
+            tcpSock.onReceive(transPkt, packet.getSrc());
         }
-        if(replyTransPkt==null) {
-            return null;
-        }
+
+        /*
         Packet replyPkt = new Packet(packet.getSrc(), this.addr, Packet.MAX_TTL, Protocol.TRANSPORT_PKT, node.getSeqIncre(),
                 replyTransPkt.pack());
         return replyPkt;
+        */
     }
 
     public int getAddr() {
@@ -76,8 +83,21 @@ public class TCPManager {
      *                 a local port
      */
     public TCPSock socket() {
-        listenSock = new TCPSock(this);
-        return listenSock;
+        for(int i=0; i < MAXSOCKNUM; i++) {
+            if(tcpSock[i].isClosed()) {
+                return tcpSock[i];
+            }
+        }
+        return null;
+    }
+
+
+    public void sendTrans(int destAddr, Transport transPkt) {
+        this.node.sendTrans(this.addr, destAddr, Protocol.TRANSPORT_PKT, transPkt.pack());
+    }
+
+    public void addTimer(int timeout, Callback cb) {
+        this.manager.addTimer(this.addr, timeout, cb);
     }
 
     /*

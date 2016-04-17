@@ -9,6 +9,7 @@ public class SockKey {
         this.remoteAddr = remoteAddr;
         this.remotePort = remotePort;
     }
+    /*
     SockKey(Packet packet) {
         this.localAddr = packet.getDest();
         this.remoteAddr = packet.getSrc();
@@ -17,4 +18,5 @@ public class SockKey {
         this.localPort = transPkt.getDestPort();
         this.remotePort = transPkt.getSrcPort();
     }
+    */
 }
