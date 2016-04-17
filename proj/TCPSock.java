@@ -237,6 +237,7 @@ public class TCPSock {
             sendBase = 0;
             nextseqnum = 0;
             this.flowWinSize = transPkt.getWindow();
+            tcpMan.logOutput(":");
             return;
         }
 
@@ -293,6 +294,13 @@ public class TCPSock {
     }
     //By our design we know we must have received all data upon received FIN
     void handleFIN(Transport transPkt) {
+        //Duplicate FIN
+        if(this.state == State.SHUTDOWN) {
+            tcpMan.logOutput("!");
+            return;
+        }
+        tcpMan.logOutput("F");
+        this.state = State.SHUTDOWN;
         handleFIN();
     }
     void handleFIN() {
