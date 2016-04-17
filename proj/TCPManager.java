@@ -16,8 +16,8 @@ public class TCPManager {
     private Node node;
     private int addr;
     private Manager manager;
-    TCPSock listenSock;
-    HashMap<SockKey, TCPSock> clientSock;
+    private TCPSock listenSock;
+    private HashMap<SockKey, TCPSock> clientSock;
     int sockNum; //
     private final int MAXSOCKNUM = 256;
     private TCPSock[] tcpSock;
@@ -29,10 +29,16 @@ public class TCPManager {
         this.addr = addr;
         this.manager = manager;
         this.sockNum = 0;
+        listenSock = null;
+        clientSock = new HashMap<>();
         tcpSock = new TCPSock[MAXSOCKNUM];
         for(int i = 0; i < MAXSOCKNUM; i++) {
             tcpSock[i] = new TCPSock(this);
         }
+    }
+
+    public void setListenSock(TCPSock socket) {
+        this.listenSock = socket;
     }
 
     /**
@@ -42,17 +48,27 @@ public class TCPManager {
 
     }
 
+    public HashMap<SockKey, TCPSock> getClientSock() {
+        return this.clientSock;
+    }
+
     public void findMatch(Packet packet) {
         Transport transPkt = Transport.unpack(packet.getPayload());
         SockKey sockKey = new SockKey(packet.getDest(), transPkt.getDestPort(), packet.getSrc(), transPkt.getSrcPort());
         //If the corresponding TCPSock is a listening sock
         //Or the client socket has already closed
+
+        assert(transPkt!=null);
+        assert(sockKey!=null);
+        assert(clientSock!=null);
         if(!clientSock.containsKey(sockKey) || clientSock.get(sockKey).isClosed()) {
+            assert(listenSock!=null);
             listenSock.onReceive(transPkt, packet.getSrc());
         }
         //If the corresponding TCPSock is a r/w client sock
         else {
             TCPSock tcpSock = clientSock.get(sockKey);
+            assert(tcpSock!=null);
             tcpSock.onReceive(transPkt, packet.getSrc());
         }
 

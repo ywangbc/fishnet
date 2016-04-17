@@ -79,6 +79,7 @@ public class TCPSock {
         this.remotePort = sockKey.remotePort;
         this.expectedSendSeq = expectedSendSeq;
     }
+
     /*
      * The following are the socket APIs of TCP transport service.
      * All APIs are NON-BLOCKING.
@@ -110,6 +111,7 @@ public class TCPSock {
             tcpMan.logError("Need to bind to a socket before listen");
             return -1;
         }
+        this.tcpMan.setListenSock(this);
         this.state = State.LISTEN;
         SYNConnections = new LinkedList<TCPSock>();
         this.backlog = backlog;
@@ -182,7 +184,7 @@ public class TCPSock {
                 //Connection established, update all addresses and ports
                 int ackNum = transPkt.getSeqNum()+1;
                 wrSock.init(State.ESTABLISHED, sockKey, ackNum);
-                tcpMan.clientSock.put(sockKey, wrSock);
+                tcpMan.getClientSock().put(sockKey, wrSock);
                 tcpMan.logOutput("S");
                 wrSock.sendACK();
             }
@@ -537,6 +539,8 @@ public class TCPSock {
         }
         this.remoteAddr = destAddr;
         this.remotePort = destPort;
+        SockKey sockKey = new SockKey(this.localAddr, this.localPort, this.remoteAddr, this.remotePort);
+        this.tcpMan.getClientSock().put(sockKey, this);
         sendSYN();
         this.state = State.SYN_SENT;
         return 0;
