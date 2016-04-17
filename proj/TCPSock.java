@@ -487,7 +487,7 @@ public class TCPSock {
             int pktSize = Math.min(totalSize-startPos, Transport.MAX_PAYLOAD_SIZE);
             byte[] sendBytes = new byte[pktSize];
             System.arraycopy(allSendBytes, startPos, sendBytes, 0, pktSize);
-            Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, tracedBase, sendBytes);
+            Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, tracedBase+startPos, sendBytes);
             this.tcpMan.sendTrans(this.remoteAddr, dataTransPkt);
             tcpMan.logOutput("!");
 
