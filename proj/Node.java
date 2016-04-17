@@ -173,7 +173,7 @@ public class Node {
     }
 
     public void receiveTransport(Packet packet) {
-        logOutput("Received Transport from " + packet.getSrc() + " with message: " + Utility.byteArrayToString(packet.getPayload()));
+        //logOutput("Received Transport from " + packet.getSrc() + " with message: " + Utility.byteArrayToString(packet.getPayload()));
         tcpMan.findMatch(packet);
     }
 

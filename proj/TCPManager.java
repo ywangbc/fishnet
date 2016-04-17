@@ -58,15 +58,23 @@ public class TCPManager {
         //If the corresponding TCPSock is a listening sock
         //Or the client socket has already closed
 
+        //logOutput("Finding match for: ");
+        //logSockKey(sockKey);
         assert(transPkt!=null);
         assert(sockKey!=null);
         assert(clientSock!=null);
+
+        //logOutput("ClientSock has size: "+clientSock.size());
+        //printClientSock();
+
         if(!clientSock.containsKey(sockKey) || clientSock.get(sockKey).isClosed()) {
             assert(listenSock!=null);
+            //logOutput("Socket not in client sock, use listen sock instead");
             listenSock.onReceive(transPkt, packet.getSrc());
         }
         //If the corresponding TCPSock is a r/w client sock
         else {
+            //logOutput("Socket is in client sock");
             TCPSock tcpSock = clientSock.get(sockKey);
             assert(tcpSock!=null);
             tcpSock.onReceive(transPkt, packet.getSrc());
@@ -116,6 +124,19 @@ public class TCPManager {
         this.manager.addTimer(this.addr, timeout, cb);
     }
 
+    public void logSockKey(SockKey key) {
+        logOutput("localAddr: " + key.localAddr + "; localPort: " + key.localPort + "; remoteAddr: " + key.remoteAddr + "; remotePort: " + key.remotePort);
+    }
+
+    public void printClientSock() {
+        logOutput("[ Printing Client Sock: ");
+        for (SockKey name: clientSock.keySet()){
+            logSockKey(name);
+            String value = clientSock.get(name).toString();
+            logOutput(value);
+        }
+        logOutput("] Printing Client Sock finished: ");
+    }
     /*
      * End Socket API
      */

@@ -182,11 +182,14 @@ public class TCPSock {
                     return;
                 }
                 //Connection established, update all addresses and ports
-                int ackNum = transPkt.getSeqNum()+1;
+                int ackNum = transPkt.getSeqNum();
+                tcpMan.logOutput("Init expectedseqnum: "+ackNum);
                 wrSock.init(State.ESTABLISHED, sockKey, ackNum);
+                //tcpMan.logOutput("wrSock prepared");
                 tcpMan.getClientSock().put(sockKey, wrSock);
                 tcpMan.logOutput("S");
                 wrSock.sendACK();
+                SYNConnections.add(wrSock);
             }
         }
         //If the socket is a r/w client socket
@@ -215,7 +218,7 @@ public class TCPSock {
     void handleSYN(Transport transPkt) {
         //previous ACK lost, retransmitted SYN
         if(this.state == State.ESTABLISHED || this.state == State.SHUTDOWN) {
-            tcpMan.logOutput("!"); //SYN duplicate at receiver
+            tcpMan.logOutput("! SYN DUP"); //SYN duplicate at receiver
             sendACK();
         }
         else if(this.state == State.CLOSED){
@@ -234,12 +237,14 @@ public class TCPSock {
      */
     void handleACK(Transport transPkt) {
         //Connection is established and we should update the current state
+        //logSocket(this);
+        //tcpMan.logOutput("ACK received");
         if(this.state == State.SYN_SENT) {
             this.state = State.ESTABLISHED;
             sendBase = 0;
             nextseqnum = 0;
             this.flowWinSize = transPkt.getWindow();
-            tcpMan.logOutput(":");
+            tcpMan.logOutput(": ESTABLISH");
             return;
         }
 
@@ -274,7 +279,7 @@ public class TCPSock {
                 Object[] params = new Object[]{sendBase};
                 Method method = Callback.getMethod("resendData", this, paramTypes);
                 Callback cb = new Callback(method, (Object) this, params);
-                // re-send SYN if timeout
+                // re-send Data if timeout
                 this.tcpMan.addTimer(SENDTIMEOUT, cb);
             } catch (Exception e) {
                 this.tcpMan.logError("Failed to add resend data callback in sendData");
@@ -295,25 +300,28 @@ public class TCPSock {
         }
     }
     //By our design we know we must have received all data upon received FIN
-    void handleFIN(Transport transPkt) {
+    public void handleFIN(Transport transPkt) {
         //Duplicate FIN
-        if(this.state == State.SHUTDOWN) {
-            tcpMan.logOutput("!");
+        if(this.state == State.SHUTDOWN || this.isClosed()) {
+            tcpMan.logOutput("! FIN DUP");
             return;
         }
         tcpMan.logOutput("F");
         this.state = State.SHUTDOWN;
         handleFIN();
     }
-    void handleFIN() {
+    public void handleFIN() {
         //We only need one condition to ensure we can close, as sender only send FIN if it has received all ACKs
         // We only need to make sure we read all data from buffer
         if(recvBuf.position()==0) {
+            tcpMan.logOutput("Read finished");
             this.release();
             return;
         }
+        tcpMan.logOutput("Read not finished, wait for next shutdown");
 
         //Else read has not finished, we schedule another handleFIN in the future
+        /*
         try {
             Method method = Callback.getMethod("handleFIN", this, null);
             Callback cb = new Callback(method, (Object)this, null);
@@ -323,10 +331,9 @@ public class TCPSock {
             this.tcpMan.logError("Failed to add resend handleFIN callback in handleFIN");
             e.printStackTrace();
         }
-
-
+        */
     }
-    void handleDATA(Transport transPkt) {
+    public void handleDATA(Transport transPkt) {
         if(this.state!=State.ESTABLISHED && this.state!=State.SHUTDOWN) {
             tcpMan.logError("Wrong state in handleDATA: "+stateToString(this.state));
             return;
@@ -338,10 +345,13 @@ public class TCPSock {
             if(recvBuf.remaining() < payload.length) {
                 tcpMan.logError("Flow control not working, recvBuf overflow");
             }
+            recvBuf.put(payload);
 
-            Transport synTransPkt = new Transport(localPort, remotePort, Transport.SYN, WINDOWSIZE, -1, new byte[0]);
-            this.tcpMan.sendTrans(this.remoteAddr, synTransPkt);
             expectedSendSeq += payload.length;
+            tcpMan.logOutput(".");
+        }
+        else {
+            tcpMan.logOutput("! DATA DUP, expecting "+expectedSendSeq + ", received "+seqNum);
         }
         sendACK();
     }
@@ -364,7 +374,7 @@ public class TCPSock {
             tcpMan.logError("Wrong status in sendSYN: " + stateToString(this.state));
         }
 
-        Transport synTransPkt = new Transport(localPort, remotePort, Transport.SYN, WINDOWSIZE, -1, new byte[0]);
+        Transport synTransPkt = new Transport(localPort, remotePort, Transport.SYN, WINDOWSIZE, 0, new byte[0]);
         this.tcpMan.sendTrans(this.remoteAddr, synTransPkt);
 
         try {
@@ -384,6 +394,8 @@ public class TCPSock {
             return;
         }
 
+        //logSocket(this);
+        //tcpMan.logOutput("Sending ACK");
         //pass in remaining of recvBuf for flow control
         Transport ackTransPkt = new Transport(localPort, remotePort, Transport.ACK, this.recvBuf.remaining(), expectedSendSeq, new byte[0]);
         this.tcpMan.sendTrans(this.remoteAddr, ackTransPkt);
@@ -421,6 +433,7 @@ public class TCPSock {
                 sendBuf.compact();
                 windowBuffer.put(sendBytes);
 
+                tcpMan.logOutput(".");
                 Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, nextseqnum, sendBytes);
                 this.tcpMan.sendTrans(this.remoteAddr, dataTransPkt);
 
@@ -451,7 +464,7 @@ public class TCPSock {
      * resend data from tracing base to nextseqnum
      * @param base: the base traced by timer
      */
-    public void resendData(int tracedBase) {
+    public void resendData(Integer tracedBase) {
         //If the connection has closed, all data are sent, no need to resend
         if(this.isClosed()) {
             return;
@@ -476,6 +489,7 @@ public class TCPSock {
             System.arraycopy(allSendBytes, startPos, sendBytes, 0, pktSize);
             Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, tracedBase, sendBytes);
             this.tcpMan.sendTrans(this.remoteAddr, dataTransPkt);
+            tcpMan.logOutput("!");
 
             startPos += pktSize;
         }
@@ -540,6 +554,8 @@ public class TCPSock {
         this.remoteAddr = destAddr;
         this.remotePort = destPort;
         SockKey sockKey = new SockKey(this.localAddr, this.localPort, this.remoteAddr, this.remotePort);
+        //tcpMan.logOutput("Client connecting to server, with sockKey: ");
+        //this.tcpMan.logSockKey(sockKey);
         this.tcpMan.getClientSock().put(sockKey, this);
         sendSYN();
         this.state = State.SYN_SENT;
@@ -554,6 +570,13 @@ public class TCPSock {
         //This is not elegant but we cannot change the protocol
         this.state = State.SHUTDOWN;
         //Only send FIN when all data sent and ACKs received
+        if(this.state == State.SHUTDOWN && this.sendBuf.position()==0
+                && this.sendBase==this.nextseqnum) {
+            for(int i=0; i<5; i++) {
+                sendFIN();
+            }
+            this.release();
+        }
     }
 
     /**
@@ -609,19 +632,23 @@ public class TCPSock {
         //We cannot read from a socket that is already closed
         //A connection must have sent everything before it has send FIN
         if(this.state != State.ESTABLISHED && this.state != State.SHUTDOWN) {
+
             return -1;
         }
         recvBuf.flip();
         int readCount = Math.min(len, recvBuf.remaining());
         recvBuf.get(buf, pos, readCount);
         recvBuf.compact();
+        if(this.state == State.SHUTDOWN) {
+            handleFIN();
+        }
         return readCount;
     }
 
     /*
      * End of socket API
      */
-    String stateToString(State curState) {
+    private String stateToString(State curState) {
         switch(curState) {
             case BIND:
                 return "BIND";
@@ -638,5 +665,9 @@ public class TCPSock {
             default:
                 return ("UNKNOWN STATE: "+ curState);
         }
+    }
+
+    public void logSocket(TCPSock sock) {
+        sock.tcpMan.logOutput("localAddr: "+localAddr+"; localPort: "+localPort+"; remoteAddr: "+remoteAddr+"; remotePort: "+remotePort);
     }
 }

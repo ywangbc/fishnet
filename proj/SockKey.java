@@ -19,4 +19,14 @@ public class SockKey {
         this.remotePort = transPkt.getSrcPort();
     }
     */
+    @Override
+    public int hashCode() {
+        return localAddr;
+    }
+    @Override
+    public boolean equals(Object o) {
+        SockKey target = (SockKey)o;
+        return (this.localAddr==target.localAddr && this.localPort==target.localPort &&
+                this.remoteAddr==target.remoteAddr && this.remotePort==target.remotePort);
+    }
 }
