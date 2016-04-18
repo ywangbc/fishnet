@@ -36,7 +36,6 @@ public class TCPSock {
     }
     final int PAGESIZE = 4096;
     final int BUFSIZE = PAGESIZE*4;
-    final int WINDOWSIZE = PAGESIZE;
     final int SENDTIMEOUT = 1000;
 
     private State state;
@@ -51,12 +50,12 @@ public class TCPSock {
     ByteBuffer recvBuf; //read buffer, user is responsible for reset the status ready for reading(get) after use
     WindowBuffer windowBuffer;
     int flowWinSize; //Window size for flow control, the remaining bytes in recvbuffer, used by sender
+    CongestionControl congestionControl;
 
 
     int expectedSendSeq; //Used by receiver, next inorder seq to be ACKed
     int sendBase; //Base of current window
     int nextseqnum; //First Byte in window that is not sent yet
-
 
     public TCPSock(TCPManager tcpManager) {
         this.state = State.CLOSED;
@@ -67,8 +66,9 @@ public class TCPSock {
         this.remotePort = -1;
         sendBuf = ByteBuffer.allocate(BUFSIZE);
         recvBuf = ByteBuffer.allocate(BUFSIZE);
-        windowBuffer = new WindowBuffer(WINDOWSIZE, tcpMan);
         flowWinSize = 0;
+        congestionControl = new CongestionControl();
+        windowBuffer = new WindowBuffer(CongestionControl.MAXWINSIZE, tcpMan);
     }
 
     public void init(State state, SockKey sockKey, int expectedSendSeq) {
@@ -187,7 +187,8 @@ public class TCPSock {
                 wrSock.init(State.ESTABLISHED, sockKey, ackNum);
                 //tcpMan.logOutput("wrSock prepared");
                 tcpMan.getClientSock().put(sockKey, wrSock);
-                tcpMan.logOutput("S");
+                //tcpMan.logOutput("S");
+                print("S");
                 wrSock.sendACK();
                 SYNConnections.add(wrSock);
             }
@@ -218,7 +219,8 @@ public class TCPSock {
     void handleSYN(Transport transPkt) {
         //previous ACK lost, retransmitted SYN
         if(this.state == State.ESTABLISHED || this.state == State.SHUTDOWN) {
-            tcpMan.logOutput("! SYN DUP"); //SYN duplicate at receiver
+            //tcpMan.logOutput("! SYN DUP"); //SYN duplicate at receiver
+            print("!");
             sendACK();
         }
         else if(this.state == State.CLOSED){
@@ -245,6 +247,7 @@ public class TCPSock {
             nextseqnum = 0;
             this.flowWinSize = transPkt.getWindow();
             tcpMan.logOutput(": ESTABLISH");
+            print(":");
             return;
         }
 
@@ -257,18 +260,25 @@ public class TCPSock {
         int oldnextseqnum = nextseqnum;
         //repetitive ACK, ignore
         if(ackNum <= sendBase) {
-            tcpMan.logOutput("?");
+            //tcpMan.logOutput("?");
+            print("?");
+            //Congestion control, increase duplicate number
+            congestionControl.duplicate();
             return;
         }
         //Higer sequence ACK, advance base and clear the windowBuffer, cause we have changed to a new window start index
         //Notice the timer will be started by sendData if sendBase == nextSeqnum
         else {
-            tcpMan.logOutput(":");
+            //tcpMan.logOutput(":");
+            print(":");
             this.flowWinSize = transPkt.getWindow();
             int oldSendBase = sendBase;
             sendBase = ackNum;
             windowBuffer.advance(sendBase - oldSendBase);
             sendData();
+            //Congestion control
+            congestionControl.newAck(); //clear duplicate
+            congestionControl.increment(); //update window size
         }
 
         //Since we changed base, add a new timer for this new base
@@ -304,15 +314,18 @@ public class TCPSock {
         //Duplicate FIN
         if(this.state == State.SHUTDOWN || this.isClosed()) {
             tcpMan.logOutput("! FIN DUP");
+            print("!");
             return;
         }
         tcpMan.logOutput("F");
+        print("F");
         this.state = State.SHUTDOWN;
         handleFIN();
     }
     public void handleFIN() {
         //We only need one condition to ensure we can close, as sender only send FIN if it has received all ACKs
         // We only need to make sure we read all data from buffer
+        tcpMan.logOutput("");
         if(recvBuf.position()==0) {
             tcpMan.logOutput("Read finished");
             this.release();
@@ -348,10 +361,12 @@ public class TCPSock {
             recvBuf.put(payload);
 
             expectedSendSeq += payload.length;
-            tcpMan.logOutput(".");
+            //tcpMan.logOutput(".");
+            print(".");
         }
         else {
-            tcpMan.logOutput("! DATA DUP, expecting "+expectedSendSeq + ", received "+seqNum);
+            //tcpMan.logOutput("! DATA DUP, expecting "+expectedSendSeq + ", received "+seqNum);
+            print("!");
         }
         sendACK();
     }
@@ -359,11 +374,13 @@ public class TCPSock {
     public void sendSYN() {
         //Client just bound to a port
         if(this.state == State.BIND) {
-            tcpMan.logOutput("S");
+            //tcpMan.logOutput("S");
+            print("S");
         }
         //Resend SYN
         else if(this.state == State.SYN_SENT) {
-            tcpMan.logOutput("!");
+            //tcpMan.logOutput("!");
+            print("!");
         }
         //ACK of SYN received, this must be resend, so abort
         else if(this.state == State.ESTABLISHED) {
@@ -374,7 +391,7 @@ public class TCPSock {
             tcpMan.logError("Wrong status in sendSYN: " + stateToString(this.state));
         }
 
-        Transport synTransPkt = new Transport(localPort, remotePort, Transport.SYN, WINDOWSIZE, 0, new byte[0]);
+        Transport synTransPkt = new Transport(localPort, remotePort, Transport.SYN, 0, 0, new byte[0]);
         this.tcpMan.sendTrans(this.remoteAddr, synTransPkt);
 
         try {
@@ -413,13 +430,13 @@ public class TCPSock {
             tcpMan.logError("Cannot send data in state: " + stateToString(this.state));
             return;
         }
-        if(nextseqnum < sendBase + WINDOWSIZE && nextseqnum < sendBase + this.flowWinSize) {
+        if(nextseqnum < sendBase + congestionControl.windowSize && nextseqnum < sendBase + this.flowWinSize) {
             int oldnextseqnum = nextseqnum;
-            while(nextseqnum < sendBase + WINDOWSIZE && nextseqnum < sendBase + this.flowWinSize) {
+            while(nextseqnum < sendBase + congestionControl.windowSize && nextseqnum < sendBase + this.flowWinSize) {
                 //sendBuf is ready for put, so flip first
                 sendBuf.flip();
 
-                int sendSize = Math.min(sendBase + WINDOWSIZE - nextseqnum, sendBuf.remaining()); //Congestion Windows Size, available bytes in sendBuf
+                int sendSize = Math.min(sendBase + congestionControl.windowSize - nextseqnum, sendBuf.remaining()); //Congestion Windows Size, available bytes in sendBuf
                 sendSize = Math.min(sendSize, sendBase + this.flowWinSize - nextseqnum); //Flow Window Size
                 sendSize = Math.min(sendSize, Transport.MAX_PAYLOAD_SIZE); //Maximum payload size
 
@@ -433,8 +450,9 @@ public class TCPSock {
                 sendBuf.compact();
                 windowBuffer.put(sendBytes);
 
-                tcpMan.logOutput(".");
-                Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, nextseqnum, sendBytes);
+                //tcpMan.logOutput(".");
+                print(".");
+                Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, 0, nextseqnum, sendBytes);
                 this.tcpMan.sendTrans(this.remoteAddr, dataTransPkt);
 
                 nextseqnum += sendSize;
@@ -480,6 +498,9 @@ public class TCPSock {
         }
         assert(tracedBase == sendBase);
 
+        //Congestion control, timeout
+        congestionControl.timeout();
+
         byte[] allSendBytes = windowBuffer.get();
         int totalSize = allSendBytes.length;
         int startPos = 0;
@@ -487,9 +508,10 @@ public class TCPSock {
             int pktSize = Math.min(totalSize-startPos, Transport.MAX_PAYLOAD_SIZE);
             byte[] sendBytes = new byte[pktSize];
             System.arraycopy(allSendBytes, startPos, sendBytes, 0, pktSize);
-            Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, WINDOWSIZE, tracedBase+startPos, sendBytes);
+            Transport dataTransPkt = new Transport(localPort, remotePort, Transport.DATA, 0, tracedBase+startPos, sendBytes);
             this.tcpMan.sendTrans(this.remoteAddr, dataTransPkt);
-            tcpMan.logOutput("!");
+            //tcpMan.logOutput("!");
+            print("!");
 
             startPos += pktSize;
         }
@@ -513,7 +535,8 @@ public class TCPSock {
             tcpMan.logError("Cannot send FIN before connection is established");
             return;
         }
-        tcpMan.logOutput("F");
+        //tcpMan.logOutput("F");
+        print("F");
         Transport finTransPkt = new Transport(this.localPort, this.remotePort, Transport.FIN, 0, 0, new byte[0]);
         this.tcpMan.sendTrans(this.remoteAddr, finTransPkt);
     }
@@ -669,5 +692,14 @@ public class TCPSock {
 
     public void logSocket(TCPSock sock) {
         sock.tcpMan.logOutput("localAddr: "+localAddr+"; localPort: "+localPort+"; remoteAddr: "+remoteAddr+"; remotePort: "+remotePort);
+    }
+
+    public void print(String s) {
+        System.out.print(s);
+        this.tcpMan.getNode().getManager().logNum++;
+        if(this.tcpMan.getNode().getManager().logNum>=180) {
+            this.tcpMan.getNode().getManager().logNum = 0;
+            System.out.print("\\\\");
+        }
     }
 }

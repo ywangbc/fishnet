@@ -137,6 +137,10 @@ public class TCPManager {
         }
         logOutput("] Printing Client Sock finished: ");
     }
+
+    public Node getNode() {
+        return this.node;
+    }
     /*
      * End Socket API
      */

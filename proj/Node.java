@@ -369,4 +369,8 @@ public class Node {
 
         return false;
     }
+
+    public Manager getManager() {
+        return this.manager;
+    }
 }
